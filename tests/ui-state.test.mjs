@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {DEFAULT_STATE, resolveSelection} from '../src/ui-state.mjs';
+import {DEFAULT_STATE, detectionCategoryLabel, resolveSelection} from '../src/ui-state.mjs';
 import {markerIdsInText} from '../src/protocol.mjs';
+
+test('labels the language detection carrier by its selected semantics', () => {
+  assert.equal(detectionCategoryLabel('languages', 'uLanguages'), 'Languages (Preferred)');
+  assert.equal(detectionCategoryLabel('languages', 'languages'), 'Languages (Detected)');
+  assert.equal(detectionCategoryLabel('resolution', 'uLanguages'), 'Resolution');
+});
 
 test('resolves the default UI state to a matched formatter and Fusion pair', () => {
   const selected = resolveSelection(DEFAULT_STATE);
@@ -15,9 +21,14 @@ test('resolves the default UI state to a matched formatter and Fusion pair', () 
   assert.equal(selected.formatterStyle, 'classic');
   assert.equal(selected.sourceBadgeStyle, 'detailed');
   assert.equal(selected.seadexMode, 'split');
-  assert.match(selected.fusionUrl, /exports\/fusion\/modern\/tiers\/languages-shown\/detailed\/split\/dv-priority\/colored-atmos-priority-dv-atmos\.json$/);
-  assert.match(selected.formatterUrl, /exports\/aiostreams\/classic\/preferred-only\.json$/);
-  assert.deepEqual(markerIdsInText(selected.markerSnippet).slice(-29), Array.from({length: 29}, (_, index) => index + 49));
+  assert.equal(selected.detectionMode, 'markers');
+  assert.match(selected.fusionUrl, /\/v1\/fusion\.json\?/);
+  assert.match(selected.formatterUrl, /\/v1\/formatter\.json\?/);
+  assert.equal(new URL(selected.fusionUrl).searchParams.get('filenameMask'), '00');
+  assert.deepEqual(
+    [...new Set(markerIdsInText(selected.markerSnippet).filter((id) => id >= 49))].sort((a, b) => a - b),
+    Array.from({length: 29}, (_, index) => index + 49),
+  );
 });
 
 test('normalizes Legacy selections to supported standalone badges', () => {
@@ -33,8 +44,8 @@ test('normalizes Legacy selections to supported standalone badges', () => {
   assert.equal(selected.dvAudio, 'separate');
   assert.equal(selected.dolbyProfile, 'detailed-separate');
   assert.equal(selected.pairingPriorityVisible, false);
-  assert.match(selected.fusionUrl, /exports\/fusion\/legacy\/tiers\/languages-shown\/detailed\/split\/dv-priority\/mono-audio-separate-dv-separate\.json$/);
-  assert.match(selected.formatterUrl, /exports\/aiostreams\/classic\/preferred-only\.json$/);
+  assert.equal(new URL(selected.fusionUrl).searchParams.get('badgeFamily'), 'legacy');
+  assert.equal(new URL(selected.formatterUrl).searchParams.get('style'), 'classic');
 });
 
 test('changes only the Fusion export when the badge family changes', () => {
@@ -58,13 +69,13 @@ test('preserves the compact source preference while canonicalizing unsupported s
   assert.equal(scores.fusionConfiguration.sourceBadgeStyle, 'detailed');
 });
 
-test('maps every SeaDex display mode only to Fusion', () => {
+test('maps every SeaDex display mode to both members of the matched pair', () => {
   const formatterUrl = resolveSelection(DEFAULT_STATE).formatterUrl;
   for (const seadexMode of ['split', 'combined', 'off']) {
     const selected = resolveSelection({...DEFAULT_STATE, seadexMode});
-    const publicMode = seadexMode === 'off' ? 'hidden' : seadexMode;
-    assert.match(selected.fusionUrl, new RegExp(`/${publicMode}/`));
-    assert.equal(selected.formatterUrl, formatterUrl);
+    assert.equal(new URL(selected.fusionUrl).searchParams.get('seadexMode'), seadexMode);
+    assert.equal(new URL(selected.formatterUrl).searchParams.get('seadexMode'), seadexMode);
+    if (seadexMode !== DEFAULT_STATE.seadexMode) assert.notEqual(selected.formatterUrl, formatterUrl);
   }
 });
 
@@ -78,28 +89,28 @@ test('shows pairing priority only for two overlapping combined choices', () => {
 
 test('removes languages from both sides of the matched pair', () => {
   const selected = resolveSelection({...DEFAULT_STATE, languageMode: 'off'});
-  assert.match(selected.fusionUrl, /\/languages-hidden\//);
-  assert.match(selected.formatterUrl, /\/hidden\.json$/);
+  assert.equal(new URL(selected.fusionUrl).searchParams.get('languageMode'), 'off');
+  assert.equal(new URL(selected.formatterUrl).searchParams.get('languageMode'), 'off');
   assert.equal(markerIdsInText(selected.markerSnippet).some((id) => id >= 49 && id <= 77), false);
 });
 
-test('maps all detected and configured language modes to the same Fusion filters', () => {
+test('keeps language modes explicit in both matched service URLs', () => {
   const all = resolveSelection({...DEFAULT_STATE, languageMode: 'languages'});
   const configured = resolveSelection({...DEFAULT_STATE, languageMode: 'uLanguages'});
-  assert.equal(all.fusionUrl, configured.fusionUrl);
+  assert.notEqual(all.fusionUrl, configured.fusionUrl);
   assert.notEqual(all.formatterUrl, configured.formatterUrl);
   assert.match(all.markerSnippet, /stream\.languages/);
   assert.match(configured.markerSnippet, /stream\.uLanguages/);
 });
 
-test('keeps the formatter URL universal across non-language settings', () => {
+test('changes the formatter URL for settings that change selected marker facts', () => {
   const base = resolveSelection(DEFAULT_STATE).formatterUrl;
-  const changes = [
-    {quality: 'percentages'}, {seadexMode: 'off'}, {carrier: 'combined'},
-    {dvAudio: 'separate'}, {hdrPolicy: 'show-both'}, {badgeFamily: 'legacy'},
-    {icon: 'mono'}, {sourceBadgeStyle: 'icon-only'},
-  ];
-  for (const change of changes) assert.equal(resolveSelection({...DEFAULT_STATE, ...change}).formatterUrl, base);
+  for (const change of [{quality: 'percentages'}, {seadexMode: 'off'}]) {
+    assert.notEqual(resolveSelection({...DEFAULT_STATE, ...change}).formatterUrl, base);
+  }
+  for (const change of [{carrier: 'combined'}, {badgeFamily: 'legacy'}, {icon: 'mono'}]) {
+    assert.equal(resolveSelection({...DEFAULT_STATE, ...change}).formatterUrl, base);
+  }
 });
 
 test('explains each quality prerequisite', () => {
@@ -109,7 +120,7 @@ test('explains each quality prerequisite', () => {
   assert.match(resolveSelection({...DEFAULT_STATE, quality: 'source'}).prerequisite, /does not require/i);
 });
 
-test('resolves a session custom formatter without inventing a public export URL', () => {
+test('resolves a session custom formatter locally while keeping Fusion serverless', () => {
   const customFormatter = {name: 'Custom name', description: 'Custom description'};
   const selected = resolveSelection(
     {...DEFAULT_STATE, formatterStyle: 'custom'},
@@ -117,6 +128,26 @@ test('resolves a session custom formatter without inventing a public export URL'
   );
   assert.equal(selected.formatterStyle, 'custom');
   assert.equal(selected.formatterUrl, null);
-  assert.deepEqual(selected.formatter, customFormatter);
-  assert.match(selected.fusionUrl, /exports\/fusion\//);
+  assert.equal(selected.formatter.name, customFormatter.name);
+  assert(selected.formatter.description.length > customFormatter.description.length);
+  assert.equal(selected.formatterAction, 'download');
+  assert.match(selected.fusionUrl, /\/v1\/fusion\.json\?/);
+});
+
+test('exposes automatic filename moves and a persistent irreducible capacity error', () => {
+  const moved = resolveSelection(
+    {...DEFAULT_STATE, formatterStyle: 'custom', languageMode: 'languages'},
+    {customFormatter: {name: 'Name', description: 'd'.repeat(4300)}},
+  );
+  assert(moved.plan.automaticallyMoved.length > 0);
+  assert.notEqual(moved.plan.filenameMask, 0);
+  assert.equal(new URL(moved.fusionUrl).searchParams.get('filenameMask'), moved.plan.filenameMask.toString(16).padStart(2, '0'));
+
+  const impossible = resolveSelection(
+    {...DEFAULT_STATE, formatterStyle: 'custom', detectionMode: 'filename', quality: 'tiers'},
+    {customFormatter: {name: '', description: 'd'.repeat(5000)}},
+  );
+  assert.equal(impossible.plan.fit, false);
+  assert.equal(impossible.formatter, null);
+  assert.match(impossible.persistentError, /requires .* available.*name.*cannot be used/i);
 });

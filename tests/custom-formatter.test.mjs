@@ -83,36 +83,42 @@ test('cleans both imported fields before retaining the base formatter', () => {
   assert.deepEqual(parsed.formatter, {name: 'Name', description: 'Description'});
 });
 
-test('appends the complete selected marker payload to description when it fits', () => {
+test('appends only the selected marker payload to description and never changes name', () => {
   const base = {name: 'Visible name', description: 'Visible description'};
-  const composed = composeCustomFormatter(base, {languageMode: 'uLanguages'});
-  assert.equal(composed.name, base.name);
-  assert.equal(composed.description, base.description + markerSuffix({languageMode: 'uLanguages'}));
+  const {formatter, plan} = composeCustomFormatter(base, {
+    requestedMode: 'markers', quality: 'source', seadexMode: 'split', languageMode: 'uLanguages',
+  });
+  assert.equal(formatter.name, base.name);
+  assert.equal(formatter.description.length, base.description.length + plan.requiredMarkerCharacters);
+  assert.equal(plan.filenameMask, 0);
 });
 
-test('allocates whole marker expressions across both formatter fields when required', () => {
-  const base = {name: 'n'.repeat(2000), description: 'd'.repeat(2000)};
-  const composed = composeCustomFormatter(base, {languageMode: 'off', maxLength: 4000});
-  assert(composed.name.length > base.name.length);
-  assert(composed.description.length > base.description.length);
-  assert(composed.name.length <= 4000);
-  assert(composed.description.length <= 4000);
-  assert.deepEqual(
-    [...new Set(markerIdsInText(composed.name + composed.description))].sort((a, b) => a - b),
-    Array.from({length: 49}, (_, index) => index),
-  );
+test('offloads filename-capable facts instead of using spare name capacity', () => {
+  const base = {name: '', description: 'd'.repeat(4900)};
+  const {formatter, plan} = composeCustomFormatter(base, {
+    requestedMode: 'markers', quality: 'source', seadexMode: 'split', languageMode: 'languages',
+  });
+  assert.equal(formatter.name, '');
+  assert.equal(plan.fit, true);
+  assert(plan.automaticallyMoved.length > 0);
+  assert(formatter.description.length <= 5000);
 });
 
-test('reports required and available capacity when both fields cannot hold the markers', () => {
-  const base = {name: 'n'.repeat(4900), description: 'd'.repeat(4900)};
-  assert.throws(
-    () => composeCustomFormatter(base, {languageMode: 'off'}),
-    /requires 3,116 marker characters but only 200 are available/i,
-  );
+test('reports irreducible description-only capacity without counting name headroom', () => {
+  const base = {name: '', description: 'd'.repeat(5000)};
+  const {formatter, plan} = composeCustomFormatter(base, {
+    requestedMode: 'filename', quality: 'best-good-ok', seadexMode: 'split', languageMode: 'off',
+  });
+  assert.equal(formatter, null);
+  assert.equal(plan.availableMarkerCharacters, 0);
+  assert.equal(plan.fit, false);
+  assert(plan.requiredMarkerCharacters > 0);
 });
 
 test('serializes a composed download with only AIOStreams fields and escaped markers', () => {
-  const formatter = composeCustomFormatter({name: 'Name', description: 'Description'}, {languageMode: 'off'});
+  const {formatter} = composeCustomFormatter({name: 'Name', description: 'Description'}, {
+    requestedMode: 'markers', quality: 'source', seadexMode: 'split', languageMode: 'off',
+  });
   const json = stringifyExport(formatter);
   assert.deepEqual(Object.keys(JSON.parse(json)), ['name', 'description']);
   assert.match(json, /\\u2063\\u200b/u);
@@ -138,14 +144,44 @@ test('accepts every supplied Tamtaro formatter without removing its isolated Uni
   }
 });
 
-test('fits the supplied Tamtaro formatters across both fields or reports the real combined limit', () => {
+test('plans the supplied Tamtaro formatters without ever using name capacity', () => {
   for (const name of tamtaroNames) {
     const formatter = parseCustomFormatter(tamtaro(name).value).formatter;
-    assert.doesNotThrow(() => composeCustomFormatter(formatter, {languageMode: 'off'}), `${name}: hidden`);
-    if (name === 'default') {
-      assert.throws(() => composeCustomFormatter(formatter, {languageMode: 'uLanguages'}), /only 4,337 are available/i);
-    } else {
-      assert.doesNotThrow(() => composeCustomFormatter(formatter, {languageMode: 'uLanguages'}), `${name}: preferred`);
+    const hidden = composeCustomFormatter(formatter, {
+      requestedMode: 'markers', quality: 'source', seadexMode: 'split', languageMode: 'off',
+    });
+    assert.equal(hidden.formatter?.name ?? formatter.name, formatter.name, `${name}: hidden name`);
+    const preferred = composeCustomFormatter(formatter, {
+      requestedMode: 'markers', quality: 'source', seadexMode: 'split', languageMode: 'uLanguages',
+    });
+    assert.equal(preferred.formatter?.name ?? formatter.name, formatter.name, `${name}: preferred name`);
+    if (preferred.formatter) assert(preferred.formatter.description.length <= 5000, name);
+    else assert(preferred.plan.overageCharacters > 0, name);
+  }
+});
+
+test('plans the seven local compatibility formatters across the complete selection surface when present', {
+  skip: !fs.existsSync('/Users/miloakil/Downloads/fusionbettererformatter/testbed'),
+}, () => {
+  const root = '/Users/miloakil/Downloads/fusionbettererformatter/testbed';
+  const files = fs.readdirSync(root).filter((name) => name.endsWith('.json')).sort();
+  assert.equal(files.length, 7);
+  for (const file of files) {
+    const base = parseCustomFormatter(JSON.parse(fs.readFileSync(path.join(root, file), 'utf8')), file).formatter;
+    for (const requestedMode of ['markers', 'filename', 'custom']) {
+      for (const quality of ['best-good-ok', 'tiers', 'source', 'percentages']) {
+        for (const languageMode of ['off', 'languages', 'uLanguages']) {
+          for (const seadexMode of ['split', 'combined', 'off']) {
+            const result = composeCustomFormatter(base, {
+              requestedMode, quality, languageMode, seadexMode,
+              filenameCategories: requestedMode === 'custom' ? ['visual', 'audio'] : [],
+            });
+            assert.equal(result.formatter?.name ?? base.name, base.name, `${file}: name changed`);
+            if (result.formatter) assert(result.formatter.description.length <= 5000, file);
+            else assert.equal(result.plan.overageCharacters, result.plan.finalDescriptionCharacters - 5000, file);
+          }
+        }
+      }
     }
   }
 });

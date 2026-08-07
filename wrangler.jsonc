@@ -1,0 +1,8 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "betterformatter-json",
+  "main": "worker/index.mjs",
+  "compatibility_date": "2026-08-07",
+  "workers_dev": true,
+  "preview_urls": true
+}

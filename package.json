@@ -7,6 +7,15 @@
     "test": "node --test tests/*.test.mjs",
     "verify:aiostreams": "node scripts/verify-aiostreams.mjs",
     "verify:icu": "swift scripts/verify-icu.swift exports/fusion",
-    "verify": "npm test && npm run check:generated && npm run verify:icu"
+    "verify:icu:carriers": "node scripts/verify-carrier-icu.mjs",
+    "verify:worker": "wrangler deploy --dry-run",
+    "dev:worker": "wrangler dev",
+    "verify": "npm test && npm run check:generated && npm run verify:icu && npm run verify:icu:carriers && npm run verify:worker"
+  },
+  "devDependencies": {
+    "wrangler": "4.120.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

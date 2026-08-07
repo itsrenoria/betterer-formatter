@@ -1,4 +1,5 @@
 import {JEOR_DESCRIPTION, JEOR_NAME, SNOAK_DESCRIPTION, SNOAK_NAME} from './formatter-templates.mjs';
+import {decodeFilenameMask} from './detection-categories.mjs';
 import {MARKERS as M} from './protocol.mjs';
 
 const CLASSIC_NAME = `{stream.quality::exists["{stream.quality::title}"||""]}`;
@@ -57,26 +58,41 @@ function seaDexFacts() {
   return condition('stream.seadex', 'istrue', M.SeaDex) + condition('stream.seadexBest', 'istrue', M.SeaDexBest);
 }
 
-function commonFacts() {
+function resolutionFacts() {
   return [
     condition('stream.resolution', '=2160p', M.Resolution4K),
     condition('stream.resolution', '=1080p', M.Resolution1080p),
     condition('stream.resolution', '=720p', M.Resolution720p),
+  ].join('');
+}
+
+function visualFacts() {
+  return [
     condition('stream.visualTags', '~SDR', M.SDR),
-    condition('stream.audioTags', '~DTS:X', M.DTSX),
-    condition('stream.audioTags', '~DTS-HD MA', M.DTSHDMA),
-    condition('stream.audioTags', '~DTS-HD', M.DTSHD),
-    condition('stream.audioTags', '~DTS', M.DTS),
     condition('stream.visualTags', '~HDR10+', M.HDR10Plus),
     condition('stream.visualTags', '~HDR10', M.HDR10),
     condition('stream.visualTags', '~HDR', M.HDR),
     condition('stream.visualTags', '~IMAX', M.IMAX),
     `{stream.filename::~imax enhanced::or::stream.filename::~imax.enhanced::or::stream.filename::~imax_enhanced::or::stream.filename::~imax-enhanced::or::stream.filename::~imaxenhanced["${M.IMAXEnhanced}"||""]}`,
     condition('stream.visualTags', '~DV', M.DV),
-    condition('stream.audioTags', '~Atmos', M.Atmos),
-    condition('stream.audioTags', '~TrueHD', M.TrueHD),
-    condition('stream.audioTags', '~DD+', M.DDPlus),
-    condition('stream.audioTags', '~DD', M.DD),
+  ].join('');
+}
+
+function joinedExpression(field, replacements, removals) {
+  const replace = replacements.map(([value, replacement]) => `::replace('${value}','${replacement}')`).join('');
+  const remove = removals.length ? `::remove(${removals.map((value) => `'${value}'`).join(',')})` : '';
+  return `{stream.${field}::join('')${replace}${remove}}`;
+}
+
+function audioFacts() {
+  return joinedExpression('audioTags', [
+    ['DTS-HD MA', M.DTSHDMA], ['DTS-HD', M.DTSHD], ['DTS:X', M.DTSX], ['DTS', M.DTS],
+    ['TrueHD', M.TrueHD], ['Atmos', M.Atmos], ['DD+', M.DDPlus], ['DD', M.DD],
+  ], ['DTS-ES', 'OPUS', 'FLAC', 'AAC', 'Unknown']);
+}
+
+function channelFacts() {
+  return [
     condition('stream.audioChannels', '~7.1', M.Channels71),
     condition('stream.audioChannels', '~6.1', M.Channels61),
     condition('stream.audioChannels', '~5.1', M.Channels51),
@@ -98,18 +114,25 @@ const LANGUAGE_FACTS = [
 
 function languageFacts(languageMode) {
   if (languageMode === 'off') return '';
-  const field = `stream.${languageMode}`;
-  return LANGUAGE_FACTS.map(([languages, value]) => languages.length === 1
-    ? condition(field, `~${languages[0]}`, value)
-    : condition(field, `in(${languages.map((language) => `'${language}'`).join(',')})`, value)).join('');
+  const replacements = [
+    ['Portuguese (Brazil)', M.PortugueseBrazil], ['Dual Audio', M.MultiDual],
+    ...LANGUAGE_FACTS.flatMap(([languages, value]) => languages
+      .filter((language) => language !== 'Portuguese (Brazil)' && language !== 'Dual Audio')
+      .map((language) => [language, value])),
+  ];
+  return joinedExpression(languageMode, replacements, [
+    'Bengali', 'Punjabi', 'Marathi', 'Gujarati', 'Tamil', 'Telugu', 'Kannada', 'Malayalam',
+    'Indonesian', 'Hebrew', 'Persian', 'Lithuanian', 'Latvian', 'Estonian', 'Slovak', 'Serbian',
+    'Croatian', 'Slovenian', 'Malay', 'Latino', 'Dubbed', 'Original', 'Unknown',
+  ]);
 }
 
 function qualityFacts() {
   return tierFacts() + bgbFacts() + percentageFacts();
 }
 
-function descriptionFacts() {
-  return sourceFacts() + seaDexFacts() + commonFacts();
+function commonFacts() {
+  return resolutionFacts() + visualFacts() + audioFacts() + channelFacts();
 }
 
 export function markerSuffix({languageMode = 'off'} = {}) {
@@ -117,7 +140,11 @@ export function markerSuffix({languageMode = 'off'} = {}) {
 }
 
 export function markerFragments({languageMode = 'off'} = {}) {
-  const suffix = descriptionFacts() + qualityFacts() + languageFacts(languageMode);
+  const suffix = sourceFacts() + seaDexFacts() + commonFacts() + qualityFacts() + languageFacts(languageMode);
+  return splitExpressions(suffix);
+}
+
+function splitExpressions(suffix) {
   const fragments = [];
   let start = -1;
   let depth = 0;
@@ -136,17 +163,71 @@ export function markerFragments({languageMode = 'off'} = {}) {
   return fragments;
 }
 
-export function generateFormatter({style, languageMode = 'off'}) {
+function categoryFragments(category, selection) {
+  if (category === 'source') return splitExpressions(sourceFacts());
+  if (category === 'resolution') return splitExpressions(resolutionFacts());
+  if (category === 'visual') return splitExpressions(visualFacts());
+  if (category === 'audio') return splitExpressions(audioFacts());
+  if (category === 'channels') return splitExpressions(channelFacts());
+  if (category === 'languages') return splitExpressions(languageFacts(selection.languageMode));
+  if (category === 'seadex') {
+    if (selection.seadexMode === 'off') return [];
+    const values = splitExpressions(seaDexFacts());
+    return selection.seadexMode === 'combined' ? values.slice(0, 1) : values;
+  }
+  if (category === 'tiers') return splitExpressions(tierFacts());
+  if (category === 'scoreBands') return splitExpressions(bgbFacts());
+  if (category === 'percentages') return splitExpressions(percentageFacts());
+  throw new RangeError(`unknown marker category: ${category}`);
+}
+
+export function markerFragmentsForSelection({
+  quality = 'source', languageMode = 'off', seadexMode = 'split', filenameMask = 0,
+} = {}) {
+  const filename = new Set(decodeFilenameMask(filenameMask));
+  const selected = {quality, languageMode, seadexMode};
+  const categories = [
+    'resolution', 'source', 'visual', 'audio', 'channels',
+    ...(languageMode === 'off' ? [] : ['languages']),
+    ...(seadexMode === 'off' ? [] : ['seadex']),
+    ...(quality === 'tiers' ? ['tiers'] : []),
+    ...(quality === 'best-good-ok' ? ['scoreBands'] : []),
+    ...(quality === 'percentages' ? ['percentages'] : []),
+  ];
+  return categories.flatMap((category) => filename.has(category) ? [] : (
+    categoryFragments(category, selected).map((expression) => ({category, expression}))
+  ));
+}
+
+export function markerFragmentsForPlan(plan) {
+  if (!plan || !Array.isArray(plan.markerFragments)) throw new TypeError('markerFragmentsForPlan requires a DetectionPlan.');
+  return plan.markerFragments.map((fragment) => ({...fragment}));
+}
+
+export function generateLegacyFormatter({style, languageMode = 'off'}) {
   const visible = visibleFormatter(style);
   if (style === 'jeor') {
     return assertFormatterWithinLimit({
-      name: visible.name + qualityFacts() + languageFacts(languageMode),
-      description: visible.description + descriptionFacts(),
+      name: visible.name,
+      description: visible.description + sourceFacts() + seaDexFacts() + commonFacts(),
     });
   }
   return assertFormatterWithinLimit({
     name: visible.name,
     description: visible.description + markerSuffix({languageMode}),
+  });
+}
+
+export function generateFormatter({
+  style, quality = 'source', languageMode = 'off', seadexMode = 'split', filenameMask = 0,
+}) {
+  const visible = visibleFormatter(style);
+  const suffix = markerFragmentsForSelection({quality, languageMode, seadexMode, filenameMask})
+    .map(({expression}) => expression)
+    .join('');
+  return assertFormatterWithinLimit({
+    name: visible.name,
+    description: visible.description + suffix,
   });
 }
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {allFormatterConfigurations} from '../src/configuration.mjs';
-import {generateFormatter, markerSuffix, visibleFormatter} from '../src/formatters.mjs';
+import {generateLegacyFormatter, markerSuffix, visibleFormatter} from '../src/formatters.mjs';
 import * as formatterModule from '../src/formatters.mjs';
 import {markerIdsInText} from '../src/protocol.mjs';
 
@@ -58,7 +58,7 @@ test('emits the complete curated language registry from either documented langua
   const expected = Array.from({length: 29}, (_, index) => index + 49);
   for (const languageMode of ['languages', 'uLanguages']) {
     const suffix = markerSuffix({languageMode});
-    const languageIds = markerIdsInText(suffix).filter((id) => id >= 49 && id <= 77);
+    const languageIds = [...new Set(markerIdsInText(suffix).filter((id) => id >= 49 && id <= 77))].sort((a, b) => a - b);
     assert.deepEqual(languageIds, expected);
     assert.match(suffix, new RegExp(`stream\\.${languageMode}`));
   }
@@ -69,10 +69,11 @@ test('emits the complete curated language registry from either documented langua
 
 test('keeps Portuguese variants separate and shares one marker for Multi and Dual Audio', () => {
   const suffix = markerSuffix({languageMode: 'languages'});
-  assert.match(suffix, /stream\.languages::~Portuguese/);
-  assert.match(suffix, /stream\.languages::~Portuguese \(Brazil\)/);
-  assert.match(suffix, /stream\.languages::in\('Multi','Dual Audio'\)/);
-  assert.doesNotMatch(suffix, /Dubbed|Original|Unknown/);
+  assert.match(suffix, /replace\('Portuguese','/);
+  assert.match(suffix, /replace\('Portuguese \(Brazil\)','/);
+  assert.match(suffix, /replace\('Multi','/);
+  assert.match(suffix, /replace\('Dual Audio','/);
+  assert.doesNotMatch(suffix, /replace\('(Dubbed|Original|Unknown)'/);
 });
 
 test('emits parsed SDR and 6.1 channel facts in every formatter profile', () => {
@@ -89,16 +90,23 @@ test('generates all 15 universal formatter exports below the AIOStreams limit', 
   const configurations = allFormatterConfigurations();
   assert.equal(configurations.length, 15);
   for (const configuration of configurations) {
-    const formatter = generateFormatter(configuration);
+    const formatter = generateLegacyFormatter(configuration);
     assert.deepEqual(Object.keys(formatter), ['name', 'description']);
     assert(formatter.name.length < 5000, JSON.stringify(configuration));
     assert(formatter.description.length < 5000, JSON.stringify(configuration));
     const visible = visibleFormatter(configuration.style);
     assert.equal(formatter.name.startsWith(visible.name), true);
     assert.equal(formatter.description.startsWith(visible.description), true);
+    assert.deepEqual(markerIdsInText(formatter.name), [], `${JSON.stringify(configuration)} emitted markers in name`);
     const ids = markerIdsInText(formatter.name + formatter.description);
-    assert(ids.includes(0) && ids.includes(48));
-    assert.equal(ids.includes(49), configuration.languageMode !== 'off');
+    assert(ids.includes(0));
+    if (configuration.style === 'jeor') {
+      assert.equal(ids.includes(48), false, 'legacy Jeor keeps only markers Fusion historically read from description');
+      assert.equal(ids.includes(49), false, 'legacy Jeor language markers in name were never retrievable');
+    } else {
+      assert(ids.includes(48));
+      assert.equal(ids.includes(49), configuration.languageMode !== 'off');
+    }
     assert.doesNotMatch(formatter.name + formatter.description, /Asian|quality::in\('WEB-DL','WEBRip'\)/iu);
   }
 });
@@ -111,14 +119,12 @@ test('keeps SeaDex facts universal regardless of display settings', () => {
   }
 });
 
-test('splits only Jeor marker categories across name and description', () => {
-  const jeor = generateFormatter({style: 'jeor', languageMode: 'uLanguages'});
+test('never writes Fusion markers to a generated formatter name', () => {
+  const jeor = generateLegacyFormatter({style: 'jeor', languageMode: 'uLanguages'});
   const nameIds = markerIdsInText(jeor.name);
   const descriptionIds = markerIdsInText(jeor.description);
-  assert(nameIds.includes(3) && nameIds.includes(35) && nameIds.includes(38) && nameIds.includes(49));
-  assert.equal(nameIds.includes(0), false);
+  assert.deepEqual(nameIds, []);
   assert(descriptionIds.includes(0) && descriptionIds.includes(12) && descriptionIds.includes(33));
-  assert.equal(descriptionIds.includes(35), false);
 });
 
 test('accepts the AIOStreams maximum length and rejects fields that exceed it', () => {

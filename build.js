@@ -43,7 +43,7 @@ async function buildExports({
     const relativePath = configuration.formatterExportPath(config);
     const destination = path.join(outputRoot, relativePath);
     fs.mkdirSync(path.dirname(destination), {recursive: true});
-    fs.writeFileSync(destination, protocol.stringifyExport(formatters.generateFormatter(config)));
+    fs.writeFileSync(destination, protocol.stringifyExport(formatters.generateLegacyFormatter(config)));
   }
 
   return {fusion: fusionConfigurations.length, aiostreams: formatterConfigurations.length};

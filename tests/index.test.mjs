@@ -32,9 +32,10 @@ test('offers every approved configurator choice', () => {
   assert.match(html, />Percentages</);
   assert.match(html, /data-g="quality"[\s\S]*?data-v="tiers"[\s\S]*?data-v="best-good-ok"[\s\S]*?data-v="source"[\s\S]*?data-v="percentages"/);
   assert.doesNotMatch(html, />Scores \(Best\/Good\/OK\)|>Scores \(%\)</);
-  assert.match(html, />Preferred Only</);
+  assert.match(html, /data-v="uLanguages"[^>]*>Preferred</);
   assert.match(html, /data-g="languageMode"[\s\S]*?data-v="uLanguages"[\s\S]*?data-v="languages"[\s\S]*?data-v="off"/);
-  assert.match(html, />All Detected</);
+  assert.match(html, /data-v="languages"[^>]*>Detected</);
+  assert.doesNotMatch(html, />Preferred Only|>All Detected/);
   assert.match(html, /data-g="priority"[\s\S]*?class="o on" data-v="dv"[\s\S]*?>Pair Atmos with DV<[\s\S]*?data-v="audio"[\s\S]*?>Pair Atmos with Audio</);
   assert.match(html, />DV Priority</);
   assert.doesNotMatch(html, />Keep Separate</);
@@ -60,7 +61,7 @@ test('uses a single scrolling stack with Preview before collapsed Advanced Setti
   assert.doesNotMatch(html, /grid-template-columns:repeat\(2/);
   assert.match(html, /<div id="pv"><\/div>[\s\S]*<details class="advanced" id="advanced">/);
   assert.doesNotMatch(html, /<details class="advanced" id="advanced" open/);
-  assert.match(html, /<summary>\s*<span class="advanced-title"><span class="oph">Advanced Settings<\/span><\/span>\s*<span class="section-note">Fine-tune how Dolby Vision, audio, HDR, quality, and SeaDex badges are displayed\.<\/span>\s*<\/summary>/);
+  assert.match(html, /<summary>\s*<span class="advanced-title"><span class="oph">Advanced Settings<\/span><\/span>\s*<span class="section-note">Choose how facts reach Fusion,[^<]+<\/span>\s*<\/summary>/);
   assert.match(html, /\.advanced\{[^}]*border:0;[^}]*background:transparent/);
   assert.match(html, /\.advanced-body\{padding:0\}/);
   assert.match(html, /\.advanced summary\{[^}]*margin:1\.8rem 0 0/);
@@ -71,7 +72,7 @@ test('uses a single scrolling stack with Preview before collapsed Advanced Setti
 });
 
 test('keeps information and disabled-state popups open until explicit dismissal', () => {
-  assert.equal((html.match(/class="info-btn"/g) || []).length, 11);
+  assert.equal((html.match(/class="info-btn"/g) || []).length, 12);
   assert.doesNotMatch(html, /popupTimer|setTimeout\([^,]+, 4000\)/);
   assert.match(html, /document\.addEventListener\('pointerdown'/);
   assert.match(html, /popup\.contains\(event\.target\)/);
@@ -145,7 +146,7 @@ test('offers Custom last with a disk glyph and an accessible import dialog', () 
   assert.match(html, /id="custom-file-input"[^>]*accept="\.json,application\/json"/);
   assert.match(html, /id="custom-url-input"[^>]*type="url"/);
   assert.match(html, /role="alert"/);
-  assert.match(html, /if \(event\.key === 'Escape'\) \{ closePopup\(\); if \(customDialog\.open\) closeCustomDialog\(\); \}/);
+  assert.match(html, /if \(event\.key === 'Escape'\) \{ closePopup\(\); if \(customDialog\.open\) closeCustomDialog\(\); if \(detectionDialog\.open\) closeDetectionDialog\(\); \}/);
 });
 
 test('loads custom formatters through the shared domain module and keeps them session-only', () => {
@@ -175,9 +176,22 @@ test('downloads custom JSON with escaped markers and restores URL copying for bu
   assert.match(html, /Download JSON/);
   assert.match(html, /AIOStreams → Formatter → Import → Import from File → Save/);
   assert.match(html, /stringifyExport/);
-  assert.match(html, /new Blob\(\[stringifyExport\(formatter\)\]/);
+  assert.match(html, /new Blob\(\[stringifyExport\(result\.formatter\)\]/);
   assert.match(html, /customFormatterFileName\(customSourceStem\)/);
   assert.match(html, /C\.formatterStyle === 'custom'/);
   assert.match(html, /Copy Import URL/);
   assert.match(html, /data-guide-download/);
+});
+
+test('adds Detection first in Advanced Settings with a live map and accessible Custom controls', () => {
+  assert.match(html, /class="advanced-body">\s*<div class="sec" id="detection-sec">/);
+  assert.match(html, /data-g="detectionMode"[\s\S]*?data-v="markers"[\s\S]*?data-v="filename"[\s\S]*?data-v="custom"/);
+  assert.match(html, /id="filename-carriers"/);
+  assert.match(html, /id="marker-carriers"/);
+  assert.match(html, /carrier-chip\.auto::after\{content:'Auto'/);
+  assert.match(html, /<dialog id="detection-dialog" aria-labelledby="detection-dialog-title">/);
+  assert.match(html, /Preferred languages stay on markers/);
+  assert.match(html, /detectionCategoryLabel\(category, C\.languageMode\)/);
+  assert.match(html, /C\.customFilenameCategories/);
+  assert.match(html, /Formatter and Fusion are a matched pair/);
 });

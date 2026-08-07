@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {generateFusionExport} from '../src/fusion.mjs';
+import {planDetection} from '../src/detection.mjs';
+import {visibleFormatter} from '../src/formatters.mjs';
 import {MARKERS as M, markerIdsInText} from '../src/protocol.mjs';
 import * as preview from '../src/preview.mjs';
 
@@ -169,4 +171,21 @@ test('builds an AIOStreams formatter context without changing Fusion fixture fac
   assert.deepEqual(context.stream.uLanguages, ['English', 'Spanish']);
   assert.equal(context.service.shortName, 'RD');
   assert.equal(preview.factsFor(stream, {quality: 'tiers', languageMode: 'uLanguages'}), before);
+});
+
+test('carrier-aware preview subjects combine filename with only emitted description markers', () => {
+  const stream = preview.PREVIEW_CATALOG.silo;
+  const plan = planDetection(visibleFormatter('classic'), {
+    requestedMode: 'custom', quality: 'source', languageMode: 'languages', seadexMode: 'off',
+    filenameCategories: ['resolution', 'visual', 'audio', 'channels', 'languages'],
+  });
+  const subject = preview.factsFor(stream, {quality: 'source', languageMode: 'languages'}, plan);
+  assert(subject.startsWith(`${stream.filename}\n`));
+  const markerIds = ids(subject);
+  assert(markerIds.includes(2), 'source remains marker-driven in this custom plan');
+  assert.equal(markerIds.includes(12), false, 'resolution moved to filename');
+  assert.equal(markerIds.includes(19), false, 'visual moved to filename');
+  assert.equal(markerIds.includes(22), false, 'audio moved to filename');
+  assert.equal(markerIds.includes(30), false, 'channels moved to filename');
+  assert.equal(markerIds.includes(49), false, 'languages moved to filename');
 });

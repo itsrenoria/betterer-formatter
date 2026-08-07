@@ -1,4 +1,5 @@
 import {markerFragments} from './formatters.mjs';
+import {planDetection} from './detection.mjs';
 import {
   comparatorFunctions,
   compileTemplate,
@@ -126,50 +127,21 @@ export function stripFusionMarkerExpressions(template) {
   return cleaned;
 }
 
-export function composeCustomFormatter(base, {languageMode = 'off', maxLength = 5000} = {}) {
+export function composeCustomFormatter(base, selection = {}) {
+  const maxLength = selection.maxLength ?? 5000;
   for (const field of ['name', 'description']) {
     if (typeof base?.[field] !== 'string') throw new TypeError(`Formatter ${field} must be a string.`);
     if (base[field].length > maxLength) throw new RangeError(`Formatter ${field} exceeds ${maxLength.toLocaleString('en-US')} characters.`);
   }
 
-  const fragments = markerFragments({languageMode});
-  const lengths = fragments.map((fragment) => fragment.length);
-  const required = lengths.reduce((total, length) => total + length, 0);
-  const descriptionCapacity = maxLength - base.description.length;
-  const nameCapacity = maxLength - base.name.length;
-  const available = descriptionCapacity + nameCapacity;
-  if (required > available) {
-    throw new RangeError(`Custom formatter requires ${required.toLocaleString('en-US')} marker characters but only ${available.toLocaleString('en-US')} are available.`);
-  }
-
-  const parent = Array(descriptionCapacity + 1).fill(undefined);
-  parent[0] = {previous: -1, fragment: -1};
-  lengths.forEach((length, fragment) => {
-    for (let used = descriptionCapacity - length; used >= 0; used -= 1) {
-      if (parent[used] && !parent[used + length]) {
-        parent[used + length] = {previous: used, fragment};
-      }
-    }
-  });
-
-  const minimumDescription = Math.max(0, required - nameCapacity);
-  let descriptionUse = descriptionCapacity;
-  while (descriptionUse >= minimumDescription && !parent[descriptionUse]) descriptionUse -= 1;
-  if (descriptionUse < minimumDescription) {
-    throw new RangeError(`Custom formatter markers cannot be split across the remaining ${available.toLocaleString('en-US')} characters without breaking an expression.`);
-  }
-
-  const descriptionIndexes = new Set();
-  for (let used = descriptionUse; used > 0;) {
-    const entry = parent[used];
-    descriptionIndexes.add(entry.fragment);
-    used = entry.previous;
-  }
-  const descriptionSuffix = fragments.filter((_, index) => descriptionIndexes.has(index)).join('');
-  const nameSuffix = fragments.filter((_, index) => !descriptionIndexes.has(index)).join('');
+  const plan = planDetection(base, selection, maxLength);
+  if (!plan.fit) return {formatter: null, plan};
   return {
-    name: base.name + nameSuffix,
-    description: base.description + descriptionSuffix,
+    formatter: {
+      name: base.name,
+      description: base.description + plan.markerFragments.map(({expression}) => expression).join(''),
+    },
+    plan,
   };
 }
 

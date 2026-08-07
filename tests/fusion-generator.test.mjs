@@ -65,6 +65,52 @@ test('uses marker-only patterns and production badge URLs', () => {
   }
 });
 
+test('switches only masked categories to their approved filename predicates', () => {
+  const configuration = {
+    badgeFamily: 'modern', quality: 'best-good-ok', languageBadges: true,
+    sourceBadgeStyle: 'detailed', seadexMode: 'split', icon: 'colored',
+    dolbyProfile: 'compact-dv-combined', hdrPolicy: 'suppress-with-dv',
+  };
+  const markerExport = generateFusionExport(configuration, {filenameMask: 0});
+  const filenameExport = generateFusionExport(configuration, {filenameMask: 0b101101});
+
+  const byId = (value, id) => value.filters.find((filter) => filter.id === id).pattern;
+  assert.match(byId(filenameExport, 'r-4k'), /2160\[pi\]\?/u);
+  assert.doesNotMatch(byId(filenameExport, 'r-4k'), new RegExp(M.Resolution4K, 'u'));
+  assert.match(byId(filenameExport, 'a-at-dv'), /atmos/iu);
+  assert.match(byId(filenameExport, 'a-at-dv'), /dolby|vision|\bdv\b/iu);
+  assert.match(byId(filenameExport, 'l-en'), /english|eng/iu);
+  assert.match(byId(filenameExport, 'q-br'), new RegExp(M.Best, 'u'), 'score state remains marker-driven');
+  assert.notEqual(byId(markerExport, 'r-4k'), byId(filenameExport, 'r-4k'));
+});
+
+test('preserves semantic hierarchy exclusions when facts use filename predicates', () => {
+  const value = generateFusionExport({
+    badgeFamily: 'modern', quality: 'source', languageBadges: false,
+    sourceBadgeStyle: 'detailed', seadexMode: 'off', icon: 'colored',
+    dolbyProfile: 'compact-separate', hdrPolicy: 'suppress-with-dv',
+  }, {filenameMask: 0b011101});
+  const pattern = value.filters.find(({id}) => id === 'a-dts').pattern;
+  assert.match(pattern, /dts/iu);
+  assert.match(pattern, /\(\?!/u, 'DTS:X and DTS-HD remain exclusions');
+  assert.doesNotMatch(pattern, new RegExp(M.DTS, 'u'));
+});
+
+test('generates every six-bit filename carrier mask without changing export structure', () => {
+  const configuration = {
+    badgeFamily: 'modern', quality: 'tiers', languageBadges: true,
+    sourceBadgeStyle: 'detailed', seadexMode: 'split', icon: 'mono',
+    dolbyProfile: 'audio-combined', hdrPolicy: 'show-both',
+  };
+  const baseline = generateFusionExport(configuration);
+  assert.deepEqual(generateFusionExport(configuration, {filenameMask: 0}), baseline);
+  for (let filenameMask = 0; filenameMask < 64; filenameMask += 1) {
+    const value = generateFusionExport(configuration, {filenameMask});
+    assert.equal(value.filters.length, baseline.filters.length, filenameMask);
+    assert.equal(value.groups.length, baseline.groups.length, filenameMask);
+  }
+});
+
 test('removes the complete language group when language badges are off', () => {
   const base = {quality: 'source', icon: 'colored', dolbyProfile: 'compact-separate', hdrPolicy: 'suppress-with-dv'};
   const off = generateFusionExport({...base, languageBadges: false});

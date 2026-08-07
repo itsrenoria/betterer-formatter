@@ -78,7 +78,7 @@ for (const file of files) {
   const formatter = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(Object.keys(formatter).sort(), ['description', 'name']);
   for (const field of ['name', 'description']) {
-    assert.ok(formatter[field].length < 5000, `${file} ${field} exceeds 5,000 characters`);
+    assert.ok(formatter[field].length <= 5000, `${file} ${field} exceeds 5,000 characters`);
     const parsed = parseTemplate(formatter[field]);
     assert.deepEqual(parsed.diagnostics, [], `${file} ${field} has parser diagnostics`);
     const rendered = compileTemplate(formatter[field], hooks)(fixture);
@@ -156,9 +156,8 @@ assert(sdr61Ids.includes(31), '6.1 did not emit M31');
 const jeorFormatter = JSON.parse(fs.readFileSync(path.join(exportRoot, 'jeor/preferred-only.json'), 'utf8'));
 const jeorName = compileTemplate(jeorFormatter.name, hooks)(fixture);
 const jeorDescription = compileTemplate(jeorFormatter.description, hooks)(fixture);
-const jeorNameIds = markerIdsInText(jeorName);
 const jeorDescriptionIds = markerIdsInText(jeorDescription);
-for (const markerId of [3, 35, 38, 49]) assert(jeorNameIds.includes(markerId), `Jeor name did not emit M${markerId}`);
+assert.deepEqual(markerIdsInText(jeorName), [], 'Jeor name emitted Fusion markers that Fusion cannot retrieve');
 for (const markerId of [0, 12, 33]) assert(jeorDescriptionIds.includes(markerId), `Jeor description did not emit M${markerId}`);
 assert.equal(stripInvisibleMarkers(jeorName), '\nSeverance  |   S02 · E03');
 assert.equal(stripInvisibleMarkers(jeorDescription), '◈ 18.5 GB · 25 Mbps (94)\n⛊ [RD] Debrid · NTb\n⛿ ᴇɴ · ᴘᴛ-ʙʀ · ᴍᴜʟᴛɪ  ʙᴇsᴛ ʀᴇʟᴇᴀsᴇ ');

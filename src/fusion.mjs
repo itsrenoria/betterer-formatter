@@ -1,5 +1,7 @@
 import {MARKERS as M} from './protocol.mjs';
 import {badgesFor, badgeUrl} from './badges.mjs';
+import {categoryUsesFilename} from './detection-categories.mjs';
+import {filenameDetectorForMarker} from './filename-detectors.mjs';
 
 export const DEFAULT_ASSET_BASE = 'https://raw.githubusercontent.com/9mousaa/BetterFormatter/main/assets/badges/';
 
@@ -66,8 +68,20 @@ function filter(id, name, pattern, image, style, groupId, assetBase) {
   };
 }
 
-function requires(required, excluded = []) {
-  return `(?s)^${required.map((value) => `(?=.*${value})`).join('')}${excluded.map((value) => `(?!.*${value})`).join('')}`;
+function predicateBuilder(filenameMask, patternDialect) {
+  const assertion = (value, positive) => {
+    const detector = filenameDetectorForMarker(value);
+    if (!detector || !categoryUsesFilename(filenameMask, detector.category)) {
+      return positive ? `(?=.*${value})` : `(?!.*${value})`;
+    }
+    const raw = detector.icuPattern.replace(/^\(\?i\)/u, '');
+    const expression = patternDialect === 'javascript' ? raw : `(?i:${raw})`;
+    return positive ? `(?=.*${expression})` : `(?!.*${expression})`;
+  };
+  const requires = (required, excluded = []) => `(?s)^${required.map((value) => assertion(value, true)).join('')}${excluded.map((value) => assertion(value, false)).join('')}`;
+  requires.positive = (value) => assertion(value, true);
+  requires.negative = (value) => assertion(value, false);
+  return requires;
 }
 
 function qualityStyle(icon, kind) {
@@ -79,7 +93,7 @@ function sourceArtwork(badges, icon, source, sourceBadgeStyle) {
   return badges.quality.source(icon, source);
 }
 
-function sourceFilters(badges, icon, sourceBadgeStyle, assetBase) {
+function sourceFilters(badges, icon, sourceBadgeStyle, assetBase, requires) {
   return [
     filter('q-r', 'Remux', requires([M.Remux]), sourceArtwork(badges, icon, 'remux', sourceBadgeStyle), qualityStyle(icon, 'best'), 'gq', assetBase),
     filter('q-b', 'BluRay', requires([M.BluRay]), sourceArtwork(badges, icon, 'blu-ray', sourceBadgeStyle), qualityStyle(icon, 'best'), 'gq', assetBase),
@@ -87,7 +101,7 @@ function sourceFilters(badges, icon, sourceBadgeStyle, assetBase) {
   ];
 }
 
-function bgbFilters(badges, icon, assetBase) {
+function bgbFilters(badges, icon, assetBase, requires) {
   const sources = [
     ['r', 'Remux', M.Remux, 'remux'],
     ['b', 'BluRay', M.BluRay, 'blu-ray'],
@@ -108,7 +122,7 @@ function bgbFilters(badges, icon, assetBase) {
   );
 }
 
-function tierFilters(badges, icon, sourceBadgeStyle, assetBase) {
+function tierFilters(badges, icon, sourceBadgeStyle, assetBase, requires) {
   const definitions = [];
   for (let tier = 1; tier <= 5; tier += 1) {
     definitions.push(['rmx', 'Remux', M.Remux, 'remux', tier]);
@@ -164,7 +178,7 @@ function hslHex(h, s, l) {
   return [r, g, b].map((value) => Math.round((value + m) * 255).toString(16).padStart(2, '0').toUpperCase()).join('');
 }
 
-function percentageFilters(badges, icon, sourceBadgeStyle, assetBase) {
+function percentageFilters(badges, icon, sourceBadgeStyle, assetBase, requires) {
   const digits = Array.from({length: 10}, (_, digit) => M[`Digit${digit}`]);
   const digitAlternative = `(?:${digits.join('|')})`;
   const scores = [];
@@ -172,17 +186,17 @@ function percentageFilters(badges, icon, sourceBadgeStyle, assetBase) {
     const encoded = String(score).split('').map((digit) => M[`Digit${digit}`]).join('');
     scores.push(filter(`pct-${score}`, `${score}%`, `(?s)^(?=.*${M.Score}${encoded}(?!${digitAlternative}))`, '', icon === 'mono' ? STYLE.resolution : percentageColor(score), 'gp', assetBase));
   }
-  return [...scores, ...sourceFilters(badges, icon, sourceBadgeStyle, assetBase)];
+  return [...scores, ...sourceFilters(badges, icon, sourceBadgeStyle, assetBase, requires)];
 }
 
-function qualityFilters(badges, quality, icon, sourceBadgeStyle, assetBase) {
-  if (quality === 'best-good-ok') return bgbFilters(badges, icon, assetBase);
-  if (quality === 'tiers') return tierFilters(badges, icon, sourceBadgeStyle, assetBase);
-  if (quality === 'percentages') return percentageFilters(badges, icon, sourceBadgeStyle, assetBase);
-  return sourceFilters(badges, icon, sourceBadgeStyle, assetBase);
+function qualityFilters(badges, quality, icon, sourceBadgeStyle, assetBase, requires) {
+  if (quality === 'best-good-ok') return bgbFilters(badges, icon, assetBase, requires);
+  if (quality === 'tiers') return tierFilters(badges, icon, sourceBadgeStyle, assetBase, requires);
+  if (quality === 'percentages') return percentageFilters(badges, icon, sourceBadgeStyle, assetBase, requires);
+  return sourceFilters(badges, icon, sourceBadgeStyle, assetBase, requires);
 }
 
-function seaDexFilters(badges, icon, seadexMode, assetBase) {
+function seaDexFilters(badges, icon, seadexMode, assetBase, requires) {
   if (seadexMode === 'off') return [];
   if (seadexMode === 'combined') {
     return [filter('v-seadex', 'SeaDex', requires([M.SeaDex]), badges.quality.seaDex(icon, 'general'), qualityStyle(icon, 'best'), 'gv', assetBase)];
@@ -193,7 +207,7 @@ function seaDexFilters(badges, icon, seadexMode, assetBase) {
   ];
 }
 
-function commonVisualFilters(badges, icon, hdrPolicy, assetBase) {
+function commonVisualFilters(badges, icon, hdrPolicy, assetBase, requires) {
   const dvExclusion = hdrPolicy === 'suppress-with-dv' ? [M.DV] : [];
   return [
     filter('r-4k', '4K', requires([M.Resolution4K]), badges.resolution['4k'], STYLE.resolution, 'gr', assetBase),
@@ -212,12 +226,12 @@ function commonVisualFilters(badges, icon, hdrPolicy, assetBase) {
   ];
 }
 
-function detailedCarrierPattern(marker, dvCombined) {
+function detailedCarrierPattern(marker, dvCombined, requires) {
   if (!dvCombined) return requires([marker]);
-  return `(?s)^(?=.*${marker})(?:(?=.*${M.Atmos})|(?!.*${M.DV}))`;
+  return `(?s)^${requires.positive(marker)}(?:${requires.positive(M.Atmos)}|${requires.negative(M.DV)})`;
 }
 
-function dolbyFilters(badges, profile, assetBase) {
+function dolbyFilters(badges, profile, assetBase, requires) {
   const detailed = profile.startsWith('detailed');
   const compact = profile.startsWith('compact');
   const dvCombined = profile.endsWith('dv-combined');
@@ -235,8 +249,8 @@ function dolbyFilters(badges, profile, assetBase) {
       result.push(filter('a-th-at', 'TrueHD + Atmos', requires([M.TrueHD, M.Atmos], [M.DV]), badges.audio.trueHdAtmos, STYLE.transparent, 'ga', assetBase));
       result.push(filter('a-dp-at', 'DD+ + Atmos', requires([M.DDPlus, M.Atmos], [M.TrueHD, M.DV]), badges.audio.ddPlusAtmos, STYLE.transparent, 'ga', assetBase));
       result.push(filter('a-at', 'Atmos', requires([M.Atmos], [M.TrueHD, M.DDPlus, M.DV]), badges.audio.atmos, STYLE.transparent, 'ga', assetBase));
-      result.push(filter('a-th', 'TrueHD', `(?s)^(?=.*${M.TrueHD})(?:(?=.*${M.DV})(?=.*${M.Atmos})|(?!.*${M.DV})(?!.*${M.Atmos}))`, badges.audio.trueHd, STYLE.transparent, 'ga', assetBase));
-      result.push(filter('a-dp', 'DD+', `(?s)^(?=.*${M.DDPlus})(?!.*${M.TrueHD})(?:(?=.*${M.DV})(?=.*${M.Atmos})|(?!.*${M.DV})(?!.*${M.Atmos}))`, badges.audio.ddPlus, STYLE.transparent, 'ga', assetBase));
+      result.push(filter('a-th', 'TrueHD', `(?s)^${requires.positive(M.TrueHD)}(?:${requires.positive(M.DV)}${requires.positive(M.Atmos)}|${requires.negative(M.DV)}${requires.negative(M.Atmos)})`, badges.audio.trueHd, STYLE.transparent, 'ga', assetBase));
+      result.push(filter('a-dp', 'DD+', `(?s)^${requires.positive(M.DDPlus)}${requires.negative(M.TrueHD)}(?:${requires.positive(M.DV)}${requires.positive(M.Atmos)}|${requires.negative(M.DV)}${requires.negative(M.Atmos)})`, badges.audio.ddPlus, STYLE.transparent, 'ga', assetBase));
       result.push(filter('a-dd', 'DD', requires([M.DD], [M.DDPlus, M.TrueHD, M.Atmos, M.DV]), badges.audio.dd, STYLE.transparent, 'ga', assetBase));
       return result;
     }
@@ -255,9 +269,9 @@ function dolbyFilters(badges, profile, assetBase) {
     result.push(filter('a-at-dv', 'Atmos + DV', requires([M.Atmos, M.DV]), badges.combined.dvAtmos, STYLE.transparent, 'ga', assetBase));
     result.push(filter('a-at', 'Atmos', requires([M.Atmos], [M.DV]), badges.audio.atmos, STYLE.transparent, 'ga', assetBase));
     result.push(filter('a-th-dv', 'TrueHD + DV', requires([M.TrueHD, M.DV], [M.Atmos]), badges.combined.dvTrueHd, STYLE.transparent, 'ga', assetBase));
-    result.push(filter('a-th', 'TrueHD', detailed ? detailedCarrierPattern(M.TrueHD, true) : requires([M.TrueHD], [M.Atmos, M.DV]), badges.audio.trueHd, STYLE.transparent, 'ga', assetBase));
+    result.push(filter('a-th', 'TrueHD', detailed ? detailedCarrierPattern(M.TrueHD, true, requires) : requires([M.TrueHD], [M.Atmos, M.DV]), badges.audio.trueHd, STYLE.transparent, 'ga', assetBase));
     result.push(filter('a-dp-dv', 'DD+ + DV', requires([M.DDPlus, M.DV], [M.Atmos, M.TrueHD]), badges.combined.dvDdPlus, STYLE.transparent, 'ga', assetBase));
-    result.push(filter('a-dp', 'DD+', detailed ? detailedCarrierPattern(M.DDPlus, true) : requires([M.DDPlus], [M.Atmos, M.TrueHD, M.DV]), badges.audio.ddPlus, STYLE.transparent, 'ga', assetBase));
+    result.push(filter('a-dp', 'DD+', detailed ? detailedCarrierPattern(M.DDPlus, true, requires) : requires([M.DDPlus], [M.Atmos, M.TrueHD, M.DV]), badges.audio.ddPlus, STYLE.transparent, 'ga', assetBase));
     result.push(filter('a-dd-dv', 'DD + DV', requires([M.DD, M.DV], [M.Atmos, M.TrueHD, M.DDPlus]), badges.combined.dvDd, STYLE.transparent, 'ga', assetBase));
     result.push(filter('a-dd', 'DD', requires([M.DD], [M.Atmos, M.TrueHD, M.DDPlus, M.DV]), badges.audio.dd, STYLE.transparent, 'ga', assetBase));
     result.push(filter('a-dv', 'DV', requires([M.DV], [M.Atmos, M.TrueHD, M.DDPlus, M.DD]), badges.visual.dolbyVision, STYLE.transparent, 'gv', assetBase));
@@ -286,7 +300,7 @@ const LANGUAGE_FILTERS = [
   ['mu', '🌐', M.MultiDual],
 ];
 
-function languageFilters(assetBase) {
+function languageFilters(assetBase, requires) {
   return LANGUAGE_FILTERS.map(([id, name, value]) => filter(`l-${id}`, name, requires([value]), '', STYLE.language, 'gl', assetBase));
 }
 
@@ -302,21 +316,26 @@ function groups(quality, languageBadges) {
   return result;
 }
 
-export function generateFusionExport(configuration, {assetBase = DEFAULT_ASSET_BASE} = {}) {
+export function generateFusionExport(configuration, {
+  assetBase = DEFAULT_ASSET_BASE, filenameMask = 0, patternDialect = 'icu',
+} = {}) {
   const {
     badgeFamily = 'modern', quality, icon, dolbyProfile, hdrPolicy, languageBadges,
     sourceBadgeStyle = 'detailed', seadexMode = 'split',
   } = configuration;
+  if (!Number.isInteger(filenameMask) || filenameMask < 0 || filenameMask > 63) throw new RangeError('filenameMask must be between 0 and 63.');
+  if (!['icu', 'javascript'].includes(patternDialect)) throw new RangeError(`unknown pattern dialect: ${patternDialect}`);
   const badges = badgesFor(badgeFamily);
+  const requires = predicateBuilder(filenameMask, patternDialect);
   const filters = [
-    ...qualityFilters(badges, quality, icon, sourceBadgeStyle, assetBase),
-    ...seaDexFilters(badges, icon, seadexMode, assetBase),
-    ...commonVisualFilters(badges, icon, hdrPolicy, assetBase),
-    ...dolbyFilters(badges, dolbyProfile, assetBase),
+    ...qualityFilters(badges, quality, icon, sourceBadgeStyle, assetBase, requires),
+    ...seaDexFilters(badges, icon, seadexMode, assetBase, requires),
+    ...commonVisualFilters(badges, icon, hdrPolicy, assetBase, requires),
+    ...dolbyFilters(badges, dolbyProfile, assetBase, requires),
     filter('c-71', '7.1', requires([M.Channels71]), badges.channels['7.1'], STYLE.transparent, 'gc', assetBase),
     filter('c-61', '6.1', requires([M.Channels61], [M.Channels71]), badges.channels['6.1'], STYLE.transparent, 'gc', assetBase),
     filter('c-51', '5.1', requires([M.Channels51], [M.Channels61, M.Channels71]), badges.channels['5.1'], STYLE.transparent, 'gc', assetBase),
-    ...(languageBadges ? languageFilters(assetBase) : []),
+    ...(languageBadges ? languageFilters(assetBase, requires) : []),
   ];
   return {
     filters: applyFilterTheme(filters, badgeFamily, icon),

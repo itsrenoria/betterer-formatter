@@ -1,4 +1,5 @@
 import {MARKERS as M} from './protocol.mjs';
+import {renderCustomFormatter} from './custom-formatter.mjs';
 
 const languages = (...values) => values.map((key) => M[key]);
 
@@ -97,7 +98,12 @@ export function scoreFacts(quality, score) {
   return '';
 }
 
-export function factsFor(stream, state) {
+export function factsFor(stream, state, plan = null) {
+  if (plan) {
+    const template = plan.markerFragments.map(({expression}) => expression).join('');
+    const emitted = renderCustomFormatter({name: '', description: template}, formatterContextFor(stream)).description;
+    return `${stream.filename}\n${emitted}`;
+  }
   const languageFacts = state.languageMode === 'off' ? '' : stream[state.languageMode].join('');
   return stream.source + stream.tier + bgbFact(stream.score) + percentageFact(stream.score) + stream.common + languageFacts;
 }
